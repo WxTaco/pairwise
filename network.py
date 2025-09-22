@@ -4,7 +4,7 @@ import threading
 from typing import Callable, Optional
 
 class NetworkManager:
-    def __init__(self, port: int = 8888, logger=None):
+    def __init__(self, port: int = 22, logger=None):
         self.port = port
         self.socket = None
         self.peer_socket = None
