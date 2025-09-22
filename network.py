@@ -100,31 +100,42 @@ class NetworkManager:
                 break
     
     def _handle_peer(self, peer_socket):
+        self._log("Started handling peer connection")
         buffer = ""
         while True:
             try:
                 data = peer_socket.recv(1024).decode()
                 if not data:
+                    self._log("Peer disconnected (no data received)")
                     break
-                
+
+                self._log(f"Received {len(data)} bytes from peer")
                 buffer += data
+
                 while '\n' in buffer:
                     line, buffer = buffer.split('\n', 1)
                     if line.strip():
+                        self._log(f"Processing message: {line[:50]}...")
                         try:
                             message = json.loads(line)
+                            self._log(f"Parsed message type: {message.get('type', 'unknown')}")
                             if self.message_callback:
                                 self.message_callback(message)
-                        except json.JSONDecodeError:
-                            pass
-            except:
+                        except json.JSONDecodeError as e:
+                            self._log(f"Failed to parse JSON message: {e}")
+            except Exception as e:
+                self._log(f"Error handling peer connection: {e}")
                 break
-        
+
+        self._log("Peer connection closed")
         if self.connection_callback:
             self.connection_callback(False)
     
     def close(self):
+        self._log("Closing network connections")
         if self.peer_socket:
             self.peer_socket.close()
+            self._log("Peer socket closed")
         if self.socket:
             self.socket.close()
+            self._log("Server socket closed")

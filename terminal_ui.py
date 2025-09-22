@@ -1,12 +1,16 @@
 import threading
-import sys
 from datetime import datetime
 
 class TerminalUI:
-    def __init__(self):
+    def __init__(self, logger=None):
         self.running = False
         self.input_thread = None
         self.message_callback = None
+        self.logger = logger
+
+    def _log(self, message):
+        if self.logger:
+            self.logger(f"[UI] {message}")
     
     def set_message_callback(self, callback):
         self.message_callback = callback
