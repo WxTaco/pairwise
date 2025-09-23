@@ -5,6 +5,7 @@ from network import NetworkManager
 class ConnectionState(Enum):
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
+    KEY_EXCHANGE = "key_exchange"
     AUTHENTICATING = "authenticating"
     CONNECTED = "connected"
 
@@ -15,7 +16,9 @@ class PairwiseProtocol:
         self.network = NetworkManager(logger=logger)
         self.state = ConnectionState.DISCONNECTED
         self.pending_challenge = None
+        self.peer_challenge = None
         self.message_callback = None
+        self.is_initiator = False
 
         self.network.set_message_callback(self._handle_message)
         self.network.set_connection_callback(self._handle_connection)
@@ -28,10 +31,10 @@ class PairwiseProtocol:
     def set_message_callback(self, callback):
         self.message_callback = callback
 
-    def generate_key(self):
-        key = self.key_manager.generate_key()
-        self._log("Generated new identity key for this session")
-        return key
+    def generate_key_pair(self):
+        public_key = self.key_manager.generate_key_pair()
+        self._log("Generated new ECDSA key pair for this session")
+        return public_key
 
     def start_listening(self):
         self._log("Starting to listen for incoming connections")
@@ -39,10 +42,9 @@ class PairwiseProtocol:
         self.state = ConnectionState.CONNECTING
         self._log(f"State changed to: {self.state.value}")
 
-    def connect_to_peer(self, ip: str, peer_key: str):
+    def connect_to_peer(self, ip: str):
         self._log(f"Initiating connection to peer at {ip}")
-        self._log("Setting peer's public key for authentication")
-        self.key_manager.set_peer_key(peer_key)
+        self.is_initiator = True
         self.state = ConnectionState.CONNECTING
         self._log(f"State changed to: {self.state.value}")
         success = self.network.connect_to_peer(ip)
@@ -60,8 +62,8 @@ class PairwiseProtocol:
 
     def _handle_connection(self, connected: bool):
         if connected and self.state == ConnectionState.CONNECTING:
-            self._log("Network connection established, starting authentication")
-            self._start_authentication()
+            self._log("Network connection established, starting key exchange")
+            self._start_key_exchange()
         elif not connected:
             self._log("Network connection lost")
             self.state = ConnectionState.DISCONNECTED
@@ -69,17 +71,17 @@ class PairwiseProtocol:
             if self.message_callback:
                 self.message_callback('system', 'Connection lost')
     
-    def _start_authentication(self):
-        self._log("=== STARTING PAIRWISE AUTHENTICATION ===")
-        self.state = ConnectionState.AUTHENTICATING
+    def _start_key_exchange(self):
+        self._log("=== STARTING KEY EXCHANGE ===")
+        self.state = ConnectionState.KEY_EXCHANGE
         self._log(f"State changed to: {self.state.value}")
 
-        self._log("Step 1: Generating cryptographic challenge")
-        challenge = self.key_manager.generate_challenge()
-        self.pending_challenge = challenge
-
-        self._log("Step 2: Sending challenge to peer for verification")
-        self.network.send_message('auth_challenge', {'challenge': challenge})
+        if self.is_initiator:
+            self._log("Step 1: Sending our public key to peer")
+            public_key = self.key_manager.get_public_key_string()
+            self.network.send_message('key_exchange', {'public_key': public_key})
+        else:
+            self._log("Waiting for peer to send their public key")
     
     def _handle_message(self, message):
         msg_type = message.get('type')
@@ -87,7 +89,11 @@ class PairwiseProtocol:
 
         self._log(f"Processing incoming message: {msg_type}")
 
-        if msg_type == 'auth_challenge':
+        if msg_type == 'key_exchange':
+            self._handle_key_exchange(data)
+        elif msg_type == 'key_exchange_response':
+            self._handle_key_exchange_response(data)
+        elif msg_type == 'auth_challenge':
             self._handle_auth_challenge(data)
         elif msg_type == 'auth_response':
             self._handle_auth_response(data)
@@ -99,45 +105,115 @@ class PairwiseProtocol:
             self._handle_chat_message(data)
         else:
             self._log(f"Unknown message type received: {msg_type}")
-    
+
+    def _handle_key_exchange(self, data):
+        self._log("=== RECEIVED KEY EXCHANGE ===")
+        peer_public_key = data.get('public_key')
+        if not peer_public_key:
+            self._log("Invalid key exchange: no public key provided")
+            self.network.send_message('auth_failure', {})
+            return
+
+        self._log("Step 2: Setting peer's public key")
+        if not self.key_manager.set_peer_public_key(peer_public_key):
+            self._log("Failed to set peer's public key")
+            self.network.send_message('auth_failure', {})
+            return
+
+        if not self.is_initiator:
+            # We're the server, send our public key back
+            self._log("Step 3: Sending our public key in response")
+            our_public_key = self.key_manager.get_public_key_string()
+            self.network.send_message('key_exchange_response', {'public_key': our_public_key})
+
+        # Start authentication phase
+        self._log("Key exchange complete, starting authentication")
+        self._start_authentication()
+
+    def _handle_key_exchange_response(self, data):
+        self._log("=== RECEIVED KEY EXCHANGE RESPONSE ===")
+        peer_public_key = data.get('public_key')
+        if not peer_public_key:
+            self._log("Invalid key exchange response: no public key provided")
+            self.network.send_message('auth_failure', {})
+            return
+
+        self._log("Step 4: Setting peer's public key from response")
+        if not self.key_manager.set_peer_public_key(peer_public_key):
+            self._log("Failed to set peer's public key")
+            self.network.send_message('auth_failure', {})
+            return
+
+        # Start authentication phase
+        self._log("Key exchange complete, starting authentication")
+        self._start_authentication()
+
+    def _start_authentication(self):
+        self._log("=== STARTING AUTHENTICATION ===")
+        self.state = ConnectionState.AUTHENTICATING
+        self._log(f"State changed to: {self.state.value}")
+
+        # Generate and send our challenge
+        self._log("Step 5: Generating challenge for peer")
+        challenge = self.key_manager.generate_challenge()
+        self.pending_challenge = challenge
+        self.network.send_message('auth_challenge', {'challenge': challenge})
+
     def _handle_auth_challenge(self, data):
         self._log("=== RECEIVED AUTHENTICATION CHALLENGE ===")
         challenge = data.get('challenge')
         if not challenge:
             self._log("Invalid challenge received (empty)")
+            self.network.send_message('auth_failure', {})
             return
 
-        self._log("Step 3: Peer sent challenge, creating response using our private key")
-        response = self.key_manager.create_response(challenge)
-        if response:
-            self._log("Step 4: Sending authentication response back to peer")
-            self.network.send_message('auth_response', {'response': response})
+        self._log("Step 6: Signing challenge with our private key")
+        signature = self.key_manager.sign_challenge(challenge)
+        if signature:
+            self._log("Step 7: Sending signed response back to peer")
+            self.network.send_message('auth_response', {'challenge': challenge, 'signature': signature})
+
+            # Also send our own challenge if we haven't already
+            if not self.peer_challenge:
+                self._log("Step 8: Sending our own challenge to peer")
+                our_challenge = self.key_manager.generate_challenge()
+                self.peer_challenge = our_challenge
+                self.network.send_message('auth_challenge', {'challenge': our_challenge})
         else:
-            self._log("Failed to create response - no private key available")
+            self._log("Failed to sign challenge - no private key available")
             self.network.send_message('auth_failure', {})
     
     def _handle_auth_response(self, data):
         self._log("=== RECEIVED AUTHENTICATION RESPONSE ===")
-        response = data.get('response')
-        if not response or not self.pending_challenge:
-            self._log("Invalid response or no pending challenge")
+        challenge = data.get('challenge')
+        signature = data.get('signature')
+
+        if not challenge or not signature:
+            self._log("Invalid response: missing challenge or signature")
             self.network.send_message('auth_failure', {})
             return
 
-        self._log("Step 5: Verifying peer's response using their public key")
-        if self.key_manager.verify_challenge(self.pending_challenge, response):
-            self._log("Step 6: Authentication successful! Peer has correct key")
-            self.network.send_message('auth_success', {})
-            self.state = ConnectionState.CONNECTED
-            self._log(f"State changed to: {self.state.value}")
-            self._log("=== PAIRWISE CONNECTION ESTABLISHED ===")
-            if self.message_callback:
-                self.message_callback('system', 'Authentication successful - Connected!')
+        self._log("Step 9: Verifying peer's signature using their public key")
+        if self.key_manager.verify_signature(challenge, signature):
+            self._log("Step 10: Peer authentication successful!")
+
+            # Check if we've completed mutual authentication
+            if self.peer_challenge and challenge == self.pending_challenge:
+                # Both sides authenticated successfully
+                self.network.send_message('auth_success', {})
+                self.state = ConnectionState.CONNECTED
+                self._log(f"State changed to: {self.state.value}")
+                self._log("=== PAIRWISE CONNECTION ESTABLISHED ===")
+                if self.message_callback:
+                    self.message_callback('system', 'Authentication successful - Connected!')
+            else:
+                # Still waiting for our challenge to be answered
+                self._log("Waiting for peer to respond to our challenge")
         else:
-            self._log("Step 6: Authentication failed! Peer has incorrect key")
+            self._log("Step 10: Peer authentication failed! Invalid signature")
             self.network.send_message('auth_failure', {})
             if self.message_callback:
-                self.message_callback('system', 'Authentication failed - Invalid key')
+                self.message_callback('system', 'Authentication failed - Invalid signature')
     
     def _handle_auth_success(self):
         self._log("=== AUTHENTICATION SUCCESS CONFIRMED ===")

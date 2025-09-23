@@ -28,12 +28,12 @@ class PairwiseApp:
         print()
 
         print("Initializing pairwise protocol...")
-        self.my_key = self.protocol.generate_key()
-        print(f"Your key: {self.my_key}")
+        self.my_key = self.protocol.generate_key_pair()
+        print(f"Your public key: {self.my_key[:32]}...")
         print()
         print("Commands:")
         print("  listen                    - Start listening for connections")
-        print("  connect <ip> <peer_key>   - Connect to peer")
+        print("  connect <ip>              - Connect to peer (no pre-shared key needed)")
         print("  logs on/off               - Toggle detailed logging")
         print("  quit                      - Exit")
         print()
@@ -77,15 +77,14 @@ class PairwiseApp:
             self.protocol.start_listening()
 
         elif command == "connect":
-            if len(parts) != 3:
-                self.ui.display_info("Usage: connect <ip> <peer_key>")
+            if len(parts) != 2:
+                self.ui.display_info("Usage: connect <ip>")
                 return
 
             ip = parts[1]
-            peer_key = parts[2]
 
-            self.ui.display_info(f"Initiating connection to {ip} with peer key {peer_key[:8]}...")
-            self.protocol.connect_to_peer(ip, peer_key)
+            self.ui.display_info(f"Initiating connection to {ip}...")
+            self.protocol.connect_to_peer(ip)
 
         elif self.protocol.get_state() == ConnectionState.CONNECTED:
             if self.protocol.send_chat_message(text):
@@ -94,7 +93,7 @@ class PairwiseApp:
                 self.ui.display_info("Failed to send message")
 
         else:
-            self.ui.display_info("Not connected. Use 'listen' or 'connect <ip> <peer_key>'")
+            self.ui.display_info("Not connected. Use 'listen' or 'connect <ip>'")
 
 def main():
     app = PairwiseApp()
