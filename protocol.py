@@ -1,3 +1,4 @@
+import json
 from enum import Enum
 from typing import Optional, Callable, Dict, Any
 from crypto import KeyManager
@@ -58,8 +59,17 @@ class PairwiseProtocol:
             self._log("Cannot send chat message: Not in connected state")
             return False
 
-        self._log(f"Sending chat message: {text[:30]}...")
-        return self.network.send_message('chat', {'text': text})
+        self._log(f"Sending encrypted chat message: {text[:30]}...")
+        return self._send_encrypted_message('chat', {'text': text})
+
+    def _send_encrypted_message(self, message_type: str, data: Dict[str, Any]) -> bool:
+        """Send an encrypted message"""
+        encrypted_data = self.key_manager.encrypt_message(str(data))
+        if not encrypted_data:
+            self._log("Failed to encrypt message")
+            return False
+
+        return self.network.send_message(message_type, {'encrypted': encrypted_data})
 
     def _handle_connection(self, connected: bool) -> None:
         if connected and self.state == ConnectionState.CONNECTING:
@@ -127,8 +137,15 @@ class PairwiseProtocol:
             our_public_key = self.key_manager.get_public_key_string()
             self.network.send_message('key_exchange_response', {'public_key': our_public_key})
 
+        # Derive shared secret for encryption
+        self._log("Key exchange complete, deriving shared secret")
+        if not self.key_manager.derive_shared_secret():
+            self._log("Failed to derive shared secret")
+            self.network.send_message('auth_failure', {})
+            return
+
         # Start authentication phase
-        self._log("Key exchange complete, starting authentication")
+        self._log("Shared secret derived, starting authentication")
         self._start_authentication()
 
     def _handle_key_exchange_response(self, data: Dict[str, Any]) -> None:
@@ -145,8 +162,15 @@ class PairwiseProtocol:
             self.network.send_message('auth_failure', {})
             return
 
+        # Derive shared secret for encryption
+        self._log("Key exchange complete, deriving shared secret")
+        if not self.key_manager.derive_shared_secret():
+            self._log("Failed to derive shared secret")
+            self.network.send_message('auth_failure', {})
+            return
+
         # Start authentication phase
-        self._log("Key exchange complete, starting authentication")
+        self._log("Shared secret derived, starting authentication")
         self._start_authentication()
 
     def _start_authentication(self) -> None:
@@ -232,7 +256,25 @@ class PairwiseProtocol:
             self.message_callback('system', 'Authentication failed')
 
     def _handle_chat_message(self, data: Dict[str, Any]) -> None:
-        text = data.get('text', '')
+        if 'encrypted' in data:
+            # Decrypt the message
+            encrypted_data = data.get('encrypted', '')
+            decrypted_str = self.key_manager.decrypt_message(encrypted_data)
+            if not decrypted_str:
+                self._log("Failed to decrypt chat message")
+                return
+
+            try:
+                # Parse the decrypted data back to dict
+                decrypted_data = json.loads(decrypted_str.replace("'", '"'))
+                text = decrypted_data.get('text', '')
+            except (json.JSONDecodeError, AttributeError):
+                self._log("Failed to parse decrypted chat message")
+                return
+        else:
+            # Fallback for unencrypted messages (backward compatibility)
+            text = data.get('text', '')
+
         self._log(f"Received chat message: {text[:30]}...")
         if self.message_callback and self.state == ConnectionState.CONNECTED:
             self.message_callback('peer', text)
