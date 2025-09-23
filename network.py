@@ -1,29 +1,29 @@
 import socket
 import json
 import threading
-from typing import Callable, Optional
+from typing import Callable, Optional, Dict, Any
 
 class NetworkManager:
-    def __init__(self, port: int = 9999, logger=None):
+    def __init__(self, port: int = 9999, logger: Optional[Callable[[str], None]] = None):
         self.port = port
-        self.socket = None
-        self.peer_socket = None
+        self.socket: Optional[socket.socket] = None
+        self.peer_socket: Optional[socket.socket] = None
         self.is_server = False
-        self.message_callback: Optional[Callable] = None
-        self.connection_callback: Optional[Callable] = None
+        self.message_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        self.connection_callback: Optional[Callable[[bool], None]] = None
         self.logger = logger
 
-    def _log(self, message):
+    def _log(self, message: str) -> None:
         if self.logger:
             self.logger(f"[NETWORK] {message}")
-    
-    def set_message_callback(self, callback: Callable):
+
+    def set_message_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         self.message_callback = callback
-    
-    def set_connection_callback(self, callback: Callable):
+
+    def set_connection_callback(self, callback: Callable[[bool], None]) -> None:
         self.connection_callback = callback
     
-    def start_server(self):
+    def start_server(self) -> None:
         self._log(f"Starting server on port {self.port}")
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -36,7 +36,7 @@ class NetworkManager:
         thread.daemon = True
         thread.start()
 
-    def connect_to_peer(self, ip: str, port: int = None):
+    def connect_to_peer(self, ip: str, port: Optional[int] = None) -> bool:
         if port is None:
             port = self.port
 
@@ -59,7 +59,7 @@ class NetworkManager:
 
         return True
     
-    def send_message(self, message_type: str, data: dict):
+    def send_message(self, message_type: str, data: Dict[str, Any]) -> bool:
         if not self.peer_socket:
             self._log("Cannot send message: No peer connection")
             return False
@@ -80,8 +80,12 @@ class NetworkManager:
             self._log(f"Failed to send message: {e}")
             return False
     
-    def _accept_connections(self):
+    def _accept_connections(self) -> None:
         self._log("Waiting for incoming connections...")
+        if not self.socket:
+            self._log("Error: No server socket available")
+            return
+
         while True:
             try:
                 peer_socket, addr = self.socket.accept()
@@ -98,8 +102,8 @@ class NetworkManager:
             except Exception as e:
                 self._log(f"Error accepting connections: {e}")
                 break
-    
-    def _handle_peer(self, peer_socket):
+
+    def _handle_peer(self, peer_socket: socket.socket) -> None:
         self._log("Started handling peer connection")
         buffer = ""
         while True:
@@ -130,8 +134,8 @@ class NetworkManager:
         self._log("Peer connection closed")
         if self.connection_callback:
             self.connection_callback(False)
-    
-    def close(self):
+
+    def close(self) -> None:
         self._log("Closing network connections")
         if self.peer_socket:
             self.peer_socket.close()

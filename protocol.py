@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Optional, Callable, Dict, Any
 from crypto import KeyManager
 from network import NetworkManager
 
@@ -10,39 +11,39 @@ class ConnectionState(Enum):
     CONNECTED = "connected"
 
 class PairwiseProtocol:
-    def __init__(self, logger=None):
+    def __init__(self, logger: Optional[Callable[[str], None]] = None):
         self.logger = logger
         self.key_manager = KeyManager(logger)
         self.network = NetworkManager(logger=logger)
         self.state = ConnectionState.DISCONNECTED
-        self.pending_challenge = None
-        self.peer_challenge = None
-        self.message_callback = None
+        self.pending_challenge: Optional[str] = None
+        self.peer_challenge: Optional[str] = None
+        self.message_callback: Optional[Callable[[str, str], None]] = None
         self.is_initiator = False
 
         self.network.set_message_callback(self._handle_message)
         self.network.set_connection_callback(self._handle_connection)
         self._log("Pairwise protocol initialized")
 
-    def _log(self, message):
+    def _log(self, message: str) -> None:
         if self.logger:
             self.logger(f"[PROTOCOL] {message}")
-    
-    def set_message_callback(self, callback):
+
+    def set_message_callback(self, callback: Callable[[str, str], None]) -> None:
         self.message_callback = callback
 
-    def generate_key_pair(self):
+    def generate_key_pair(self) -> str:
         public_key = self.key_manager.generate_key_pair()
         self._log("Generated new ECDSA key pair for this session")
         return public_key
 
-    def start_listening(self):
+    def start_listening(self) -> None:
         self._log("Starting to listen for incoming connections")
         self.network.start_server()
         self.state = ConnectionState.CONNECTING
         self._log(f"State changed to: {self.state.value}")
 
-    def connect_to_peer(self, ip: str):
+    def connect_to_peer(self, ip: str) -> None:
         self._log(f"Initiating connection to peer at {ip}")
         self.is_initiator = True
         self.state = ConnectionState.CONNECTING
@@ -51,8 +52,8 @@ class PairwiseProtocol:
         if not success:
             self.state = ConnectionState.DISCONNECTED
             self._log(f"Connection failed, state changed to: {self.state.value}")
-    
-    def send_chat_message(self, text: str):
+
+    def send_chat_message(self, text: str) -> bool:
         if self.state != ConnectionState.CONNECTED:
             self._log("Cannot send chat message: Not in connected state")
             return False
@@ -60,7 +61,7 @@ class PairwiseProtocol:
         self._log(f"Sending chat message: {text[:30]}...")
         return self.network.send_message('chat', {'text': text})
 
-    def _handle_connection(self, connected: bool):
+    def _handle_connection(self, connected: bool) -> None:
         if connected and self.state == ConnectionState.CONNECTING:
             self._log("Network connection established, starting key exchange")
             self._start_key_exchange()
@@ -70,8 +71,8 @@ class PairwiseProtocol:
             self._log(f"State changed to: {self.state.value}")
             if self.message_callback:
                 self.message_callback('system', 'Connection lost')
-    
-    def _start_key_exchange(self):
+
+    def _start_key_exchange(self) -> None:
         self._log("=== STARTING KEY EXCHANGE ===")
         self.state = ConnectionState.KEY_EXCHANGE
         self._log(f"State changed to: {self.state.value}")
@@ -82,8 +83,8 @@ class PairwiseProtocol:
             self.network.send_message('key_exchange', {'public_key': public_key})
         else:
             self._log("Waiting for peer to send their public key")
-    
-    def _handle_message(self, message):
+
+    def _handle_message(self, message: Dict[str, Any]) -> None:
         msg_type = message.get('type')
         data = message.get('data', {})
 
@@ -106,7 +107,7 @@ class PairwiseProtocol:
         else:
             self._log(f"Unknown message type received: {msg_type}")
 
-    def _handle_key_exchange(self, data):
+    def _handle_key_exchange(self, data: Dict[str, Any]) -> None:
         self._log("=== RECEIVED KEY EXCHANGE ===")
         peer_public_key = data.get('public_key')
         if not peer_public_key:
@@ -130,7 +131,7 @@ class PairwiseProtocol:
         self._log("Key exchange complete, starting authentication")
         self._start_authentication()
 
-    def _handle_key_exchange_response(self, data):
+    def _handle_key_exchange_response(self, data: Dict[str, Any]) -> None:
         self._log("=== RECEIVED KEY EXCHANGE RESPONSE ===")
         peer_public_key = data.get('public_key')
         if not peer_public_key:
@@ -148,7 +149,7 @@ class PairwiseProtocol:
         self._log("Key exchange complete, starting authentication")
         self._start_authentication()
 
-    def _start_authentication(self):
+    def _start_authentication(self) -> None:
         self._log("=== STARTING AUTHENTICATION ===")
         self.state = ConnectionState.AUTHENTICATING
         self._log(f"State changed to: {self.state.value}")
@@ -159,7 +160,7 @@ class PairwiseProtocol:
         self.pending_challenge = challenge
         self.network.send_message('auth_challenge', {'challenge': challenge})
 
-    def _handle_auth_challenge(self, data):
+    def _handle_auth_challenge(self, data: Dict[str, Any]) -> None:
         self._log("=== RECEIVED AUTHENTICATION CHALLENGE ===")
         challenge = data.get('challenge')
         if not challenge:
@@ -183,7 +184,7 @@ class PairwiseProtocol:
             self._log("Failed to sign challenge - no private key available")
             self.network.send_message('auth_failure', {})
     
-    def _handle_auth_response(self, data):
+    def _handle_auth_response(self, data: Dict[str, Any]) -> None:
         self._log("=== RECEIVED AUTHENTICATION RESPONSE ===")
         challenge = data.get('challenge')
         signature = data.get('signature')
@@ -214,8 +215,8 @@ class PairwiseProtocol:
             self.network.send_message('auth_failure', {})
             if self.message_callback:
                 self.message_callback('system', 'Authentication failed - Invalid signature')
-    
-    def _handle_auth_success(self):
+
+    def _handle_auth_success(self) -> None:
         self._log("=== AUTHENTICATION SUCCESS CONFIRMED ===")
         self.state = ConnectionState.CONNECTED
         self._log(f"State changed to: {self.state.value}")
@@ -223,22 +224,22 @@ class PairwiseProtocol:
         if self.message_callback:
             self.message_callback('system', 'Authentication successful - Connected!')
 
-    def _handle_auth_failure(self):
+    def _handle_auth_failure(self) -> None:
         self._log("=== AUTHENTICATION FAILED ===")
         self.state = ConnectionState.DISCONNECTED
         self._log(f"State changed to: {self.state.value}")
         if self.message_callback:
             self.message_callback('system', 'Authentication failed')
 
-    def _handle_chat_message(self, data):
+    def _handle_chat_message(self, data: Dict[str, Any]) -> None:
         text = data.get('text', '')
         self._log(f"Received chat message: {text[:30]}...")
         if self.message_callback and self.state == ConnectionState.CONNECTED:
             self.message_callback('peer', text)
-    
-    def get_state(self):
+
+    def get_state(self) -> ConnectionState:
         return self.state
 
-    def close(self):
+    def close(self) -> None:
         self._log("Closing pairwise protocol")
         self.network.close()

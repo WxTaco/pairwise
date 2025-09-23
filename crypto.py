@@ -1,23 +1,21 @@
-import hashlib
 import secrets
-import hmac
+import base64
+from typing import Optional, Callable
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature, decode_dss_signature
-import base64
 
 class KeyManager:
-    def __init__(self, logger=None):
-        self.private_key = None
-        self.public_key = None
-        self.peer_public_key = None
+    def __init__(self, logger: Optional[Callable[[str], None]] = None):
+        self.private_key: Optional[ec.EllipticCurvePrivateKey] = None
+        self.public_key: Optional[ec.EllipticCurvePublicKey] = None
+        self.peer_public_key: Optional[ec.EllipticCurvePublicKey] = None
         self.logger = logger
 
-    def _log(self, message):
+    def _log(self, message: str) -> None:
         if self.logger:
             self.logger(f"[CRYPTO] {message}")
 
-    def generate_key_pair(self):
+    def generate_key_pair(self) -> str:
         """Generate a new ECDSA key pair"""
         self.private_key = ec.generate_private_key(ec.SECP256R1())
         self.public_key = self.private_key.public_key()
@@ -32,18 +30,25 @@ class KeyManager:
         self._log(f"Generated new ECDSA key pair: {public_key_str[:16]}...")
         return public_key_str
 
-    def set_peer_public_key(self, public_key_str):
+    def set_peer_public_key(self, public_key_str: str) -> bool:
         """Set the peer's public key from base64 encoded string"""
         try:
             public_key_bytes = base64.b64decode(public_key_str.encode('utf-8'))
-            self.peer_public_key = serialization.load_pem_public_key(public_key_bytes)
+            loaded_key = serialization.load_pem_public_key(public_key_bytes)
+
+            # Ensure it's an EC public key
+            if not isinstance(loaded_key, ec.EllipticCurvePublicKey):
+                self._log("Invalid key type: expected EllipticCurvePublicKey")
+                return False
+
+            self.peer_public_key = loaded_key
             self._log(f"Set peer public key: {public_key_str[:16]}...")
             return True
         except Exception as e:
             self._log(f"Failed to set peer public key: {e}")
             return False
 
-    def sign_challenge(self, challenge):
+    def sign_challenge(self, challenge: str) -> Optional[str]:
         """Sign a challenge with our private key"""
         self._log(f"Signing challenge: {challenge[:8]}...")
 
@@ -63,7 +68,7 @@ class KeyManager:
             self._log(f"Signing failed: {e}")
             return None
 
-    def verify_signature(self, challenge, signature_b64):
+    def verify_signature(self, challenge: str, signature_b64: str) -> bool:
         """Verify a signature using the peer's public key"""
         self._log(f"Verifying signature for challenge: {challenge[:8]}...")
 
@@ -84,13 +89,13 @@ class KeyManager:
             self._log(f"Signature verification: FAILED - {e}")
             return False
 
-    def generate_challenge(self):
+    def generate_challenge(self) -> str:
         """Generate a random challenge"""
         challenge = secrets.token_hex(16)
         self._log(f"Generated challenge: {challenge[:8]}...")
         return challenge
 
-    def get_public_key_string(self):
+    def get_public_key_string(self) -> Optional[str]:
         """Get our public key as a base64 string"""
         if not self.public_key:
             return None
@@ -102,18 +107,18 @@ class KeyManager:
         return base64.b64encode(public_key_bytes).decode('utf-8')
 
     # Legacy methods for backward compatibility (deprecated)
-    def generate_key(self):
+    def generate_key(self) -> str:
         """Legacy method - use generate_key_pair() instead"""
         return self.generate_key_pair()
 
-    def set_peer_key(self, key):
+    def set_peer_key(self, key: str) -> bool:
         """Legacy method - use set_peer_public_key() instead"""
         return self.set_peer_public_key(key)
 
-    def verify_challenge(self, challenge, response):
+    def verify_challenge(self, challenge: str, response: str) -> bool:
         """Legacy method - use verify_signature() instead"""
         return self.verify_signature(challenge, response)
 
-    def create_response(self, challenge):
+    def create_response(self, challenge: str) -> Optional[str]:
         """Legacy method - use sign_challenge() instead"""
         return self.sign_challenge(challenge)

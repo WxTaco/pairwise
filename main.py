@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-import sys
 import time
+from typing import Optional
 from datetime import datetime
 from protocol import PairwiseProtocol, ConnectionState
 from terminal_ui import TerminalUI
@@ -11,18 +11,18 @@ class PairwiseApp:
         self.log_enabled = True
         self.protocol = PairwiseProtocol(logger=self._log)
         self.ui = TerminalUI(logger=self._log)
-        self.my_key = None
+        self.my_key: Optional[str] = None
 
         self.protocol.set_message_callback(self._handle_protocol_message)
         self.ui.set_message_callback(self._handle_user_input)
 
-    def _log(self, message):
+    def _log(self, message: str) -> None:
         if self.log_enabled:
             timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
             print(f"\n[{timestamp}] {message}")
             print("> ", end="", flush=True)
     
-    def start(self):
+    def start(self) -> None:
         self.ui.clear_screen()
         print("=== Pairwise Chat with Detailed Logging ===")
         print()
@@ -49,11 +49,11 @@ class PairwiseApp:
             pass
         finally:
             self.protocol.close()
-    
-    def _handle_protocol_message(self, sender: str, message: str):
+
+    def _handle_protocol_message(self, sender: str, message: str) -> None:
         self.ui.display_message(sender, message)
-    
-    def _handle_user_input(self, text: str):
+
+    def _handle_user_input(self, text: str) -> None:
         parts = text.split()
         command = parts[0].lower() if parts else ""
 
@@ -95,7 +95,7 @@ class PairwiseApp:
         else:
             self.ui.display_info("Not connected. Use 'listen' or 'connect <ip>'")
 
-def main():
+def main() -> None:
     app = PairwiseApp()
     app.start()
 
