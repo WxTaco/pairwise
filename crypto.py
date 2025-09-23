@@ -3,12 +3,17 @@ import base64
 from typing import Optional, Callable
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 class KeyManager:
     def __init__(self, logger: Optional[Callable[[str], None]] = None):
         self.private_key: Optional[ec.EllipticCurvePrivateKey] = None
         self.public_key: Optional[ec.EllipticCurvePublicKey] = None
         self.peer_public_key: Optional[ec.EllipticCurvePublicKey] = None
+        self.shared_secret: Optional[bytes] = None
+        self.encryption_key: Optional[bytes] = None
+        self.aes_gcm: Optional[AESGCM] = None
         self.logger = logger
 
     def _log(self, message: str) -> None:
@@ -105,6 +110,73 @@ class KeyManager:
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
         return base64.b64encode(public_key_bytes).decode('utf-8')
+
+    def derive_shared_secret(self) -> bool:
+        """Derive shared secret using ECDH and set up encryption"""
+        if not self.private_key or not self.peer_public_key:
+            self._log("Cannot derive shared secret: missing keys")
+            return False
+
+        try:
+            self.shared_secret = self.private_key.exchange(ec.ECDH(), self.peer_public_key)
+
+            # Derive encryption key using HKDF
+            hkdf = HKDF(
+                algorithm=hashes.SHA256(),
+                length=32,  # 256-bit key for AES-256
+                salt=None,
+                info=b'pairwise-encryption-key'
+            )
+            self.encryption_key = hkdf.derive(self.shared_secret)
+            self.aes_gcm = AESGCM(self.encryption_key)
+
+            self._log("Successfully derived shared encryption key")
+            return True
+        except Exception as e:
+            self._log(f"Failed to derive shared secret: {e}")
+            return False
+
+    def encrypt_message(self, plaintext: str) -> Optional[str]:
+        """Encrypt a message using AES-GCM"""
+        if not self.aes_gcm:
+            self._log("Cannot encrypt: no encryption key available")
+            return None
+
+        try:
+            nonce = secrets.token_bytes(12)  # 96-bit nonce for GCM
+            ciphertext = self.aes_gcm.encrypt(nonce, plaintext.encode('utf-8'), None)
+
+            # Combine nonce + ciphertext and encode as base64
+            encrypted_data = nonce + ciphertext
+            encrypted_b64 = base64.b64encode(encrypted_data).decode('utf-8')
+
+            self._log(f"Encrypted message: {len(plaintext)} bytes -> {len(encrypted_data)} bytes")
+            return encrypted_b64
+        except Exception as e:
+            self._log(f"Encryption failed: {e}")
+            return None
+
+    def decrypt_message(self, encrypted_b64: str) -> Optional[str]:
+        """Decrypt a message using AES-GCM"""
+        if not self.aes_gcm:
+            self._log("Cannot decrypt: no encryption key available")
+            return None
+
+        try:
+            encrypted_data = base64.b64decode(encrypted_b64.encode('utf-8'))
+
+            # Extract nonce (first 12 bytes) and ciphertext
+            nonce = encrypted_data[:12]
+            ciphertext = encrypted_data[12:]
+
+            plaintext_bytes = self.aes_gcm.decrypt(nonce, ciphertext, None)
+            plaintext = plaintext_bytes.decode('utf-8')
+
+            self._log(f"Decrypted message: {len(encrypted_data)} bytes -> {len(plaintext)} bytes")
+            return plaintext
+        except Exception as e:
+            self._log(f"Decryption failed: {e}")
+            return None
 
     # Legacy methods for backward compatibility (deprecated)
     def generate_key(self) -> str:
