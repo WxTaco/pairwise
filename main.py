@@ -33,7 +33,7 @@ class PairwiseApp:
         print()
         print("Commands:")
         print("  listen                    - Start listening for connections")
-        print("  connect <ip>              - Connect to peer (no pre-shared key needed)")
+        print("  connect <ip[:port]>       - Connect to peer (no pre-shared key needed)")
         print("  logs on/off               - Toggle detailed logging")
         print("  quit                      - Exit")
         print()
@@ -78,13 +78,23 @@ class PairwiseApp:
 
         elif command == "connect":
             if len(parts) != 2:
-                self.ui.display_info("Usage: connect <ip>")
+                self.ui.display_info("Usage: connect <ip[:port]>")
                 return
 
-            ip = parts[1]
+            target = parts[1]
+            if ':' in target:
+                ip, port_str = target.split(':', 1)
+                try:
+                    port = int(port_str)
+                except ValueError:
+                    self.ui.display_info("Invalid port number")
+                    return
+            else:
+                ip = target
+                port = None
 
-            self.ui.display_info(f"Initiating connection to {ip}...")
-            self.protocol.connect_to_peer(ip)
+            self.ui.display_info(f"Initiating connection to {ip}:{port or 9999}...")
+            self.protocol.connect_to_peer(ip, port)
 
         elif self.protocol.get_state() == ConnectionState.CONNECTED:
             if self.protocol.send_chat_message(text):

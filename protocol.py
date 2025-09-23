@@ -44,12 +44,13 @@ class PairwiseProtocol:
         self.state = ConnectionState.CONNECTING
         self._log(f"State changed to: {self.state.value}")
 
-    def connect_to_peer(self, ip: str) -> None:
-        self._log(f"Initiating connection to peer at {ip}")
+    def connect_to_peer(self, ip: str, port: Optional[int] = None) -> None:
+        port_str = f":{port}" if port else ""
+        self._log(f"Initiating connection to peer at {ip}{port_str}")
         self.is_initiator = True
         self.state = ConnectionState.CONNECTING
         self._log(f"State changed to: {self.state.value}")
-        success = self.network.connect_to_peer(ip)
+        success = self.network.connect_to_peer(ip, port)
         if not success:
             self.state = ConnectionState.DISCONNECTED
             self._log(f"Connection failed, state changed to: {self.state.value}")
